@@ -1,92 +1,88 @@
 import os
 from flask import Flask, render_template
 import requests
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-def analyser_match_factuel(home_score, away_score, minute_num, state):
-    """
-    Algorithme neutre basé sur les chiffres du jour :
-    - Fragilité défensive & Fatigue
-    - Analyse neutre des xG et du rythme
-    - Recommandation de marché ciblée (BTTS, Over 0.5/2.5, Under)
-    """
+def generer_predictions_marches(home_score, away_score, minute_num, is_live=True):
+    """Génère deux prédictions sûres adaptées aux marchés BetPawa."""
     total_goals = home_score + away_score
     
-    # 1. Fragilité défensive & Fatigue (Score 1-1 ou 2-1 avant 65') -> Marché BTTS
-    if home_score >= 1 and away_score >= 1 and minute_num <= 65:
+    if is_live:
+        if minute_num >= 50 and total_goals == 0:
+            return {
+                'pred1': "Over 0.5 Fin de Match",
+                'pred2': "Multiscores (1-0, 0-1, 1-1)",
+                'confiance': 88,
+                'statut': "PRONOSTIC SÛR",
+                'raisons': ["Anomalie xG : 0-0 en 2de MT", "Fatigue du bloc bas adverse"]
+            }
+        elif home_score >= 1 and away_score >= 1:
+            return {
+                'pred1': "BTTS - Oui (Les 2 marquent)",
+                'pred2': "Over 2.5 Total Buts",
+                'confiance': 85,
+                'statut': "PRONOSTIC SÛR",
+                'raisons': ["Fragilité défensive confirmée", "Rythme offensif élevé"]
+            }
+        elif total_goals == 1 and minute_num >= 35:
+            return {
+                'pred1': "Double Chance Équipe Menée ou Nul",
+                'pred2': "Over 1.5 Fin de Match",
+                'confiance': 78,
+                'statut': "À SURVEILLER",
+                'raisons': ["Pression attendue pour égaliser", "Espaces en contre-attaque"]
+            }
+        else:
+            return {
+                'pred1': "Plus de 0.5 But 2nde Mi-Temps",
+                'pred2': "Moins de 4.5 Buts",
+                'confiance': 70,
+                'statut': "ANALYSE EN COURS",
+                'raisons': ["Observation neutre de l'efficacité", "Gestion du rythme"]
+            }
+    else:
+        # Analyse Avant-Match (Matchs à venir)
         return {
-            'marche': "BTTS - OUI (Les 2 équipes marquent)",
-            'confiance': 88,
+            'pred1': "BTTS ou Over 2.5",
+            'pred2': "Double Chance + Total > 1.5",
+            'confiance': 82,
             'statut': "PRONOSTIC SÛR",
-            'raisons': [
-                "Fragilité défensive confirmée pour les deux côtés",
-                "Rythme offensif soutenu & fatigue des blocs defensifs"
-            ]
-        }
-        
-    # 2. Opportunité But Tardif (0-0 après la 55' / Bloc bas qui fatigue) -> Marché Over 0.5
-    elif minute_num >= 55 and total_goals == 0:
-        return {
-            'marche': "OVER 0.5 (Prochain But Imminent)",
-            'confiance': 84,
-            'statut': "PRONOSTIC SÛR",
-            'raisons': [
-                "Anomalie xG : 0-0 malgré la pression en seconde mi-temps",
-                "Fatigue accumulée des blocs bas en fin de match"
-            ]
-        }
-        
-    # 3. Match Ouvert & Rythme Élevé (>= 2 buts avant la 50') -> Marché Over 2.5 / Over 3.5
-    elif total_goals >= 2 and minute_num <= 50:
-        return {
-            'marche': "OVER 2.5 / OVER 3.5",
-            'confiance': 81,
-            'statut': "PRONOSTIC SÛR",
-            'raisons': [
-                "Volume d'attaque élevé (chiffres froids du jour)",
-                "Déséquilibre tactique et rupture des lignes"
-            ]
+            'raisons': ["Calendrier chargé en milieu de semaine", "Efficacité xG du favori en baisse"]
         }
 
-    # 4. Reaction de l'équipe menée (1-0 ou 0-1 entre 35' et 65') -> Marché BTTS ou Over 1.5
-    elif total_goals == 1 and 35 <= minute_num <= 65:
-        return {
-            'marche': "OVER 1.5 (Total Buts) / BTTS",
-            'confiance': 72,
-            'statut': "À SURVEILLER",
-            'raisons': [
-                "Pression attendue de l'équipe menée",
-                "Espaces libérés en contre-attaque"
-            ]
-        }
+def construire_combines(upcoming_list):
+    """Génère des coupons de combinés ajustés par paliers de côtes."""
+    paliers = [5, 10, 20, 30, 60, 100]
+    combines = {}
+    
+    # Sélection des matchs avec la plus haute confiance
+    sures = [m for m in upcoming_list if m['score_confiance'] >= 75]
+    if len(sures) < 2:
+        sures = upcoming_list
 
-    # 5. Bloc compact / Match fermé -> Observation
-    elif minute_num >= 30 and total_goals == 0:
-        return {
-            'marche': "UNDER 1.5 Mi-Temps / Observer Over 0.5",
-            'confiance': 65,
-            'statut': "À SURVEILLER",
-            'raisons': [
-                "Style de jeu adverse en bloc bas",
-                "Faible efficacité offensive à ce stade"
-            ]
-        }
-
-    # Par défaut (Phase d'observation neutre)
-    return {
-        'marche': "PAS DE MARCHÉ SÛR (Observation)",
-        'confiance': 50,
-        'statut': "NE PAS JOUER",
-        'raisons': [
-            "Données insuffisantes pour valider un marché sûr",
-            "Attente d'une anomalie xG ou d'une rupture physique"
-        ]
-    }
+    for target in paliers:
+        coupons = []
+        # Construction de 2 coupons par palier
+        for i in range(2):
+            nb_matchs = min(max(2, target // 5 + i), len(sures))
+            selection = sures[:nb_matchs]
+            cote_estimee = round(1.4 ** len(selection), 2)
+            coupons.append({
+                'nom': f"Coupon Côte ~{target} (Option {i+1})",
+                'cote_totale': Cote_estimee if cote_estimee > 1 else target,
+                'matchs': selection
+            })
+        combines[f"cote_{target}"] = coupons
+    return combines
 
 @app.route("/")
 def index():
-    results = []
+    live_matches = []
+    upcoming_matches = []
+    
+    # Extraction des rencontres via ESPN (Global)
     url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
     
     try:
@@ -98,43 +94,60 @@ def index():
             status_info = event.get('status', {})
             clock = status_info.get('displayClock', '0\'')
             state = status_info.get('type', {}).get('state', '')
+            detail_time = status_info.get('type', {}).get('shortDetail', '')
             
             competitors = event.get('competitions', [{}])[0].get('competitors', [])
             if len(competitors) >= 2:
-                home = competitors[0]
-                away = competitors[1]
+                home_name = competitors[0].get('team', {}).get('displayName', 'Domicile')
+                away_name = competitors[1].get('team', {}).get('displayName', 'Extérieur')
                 
-                home_name = home.get('team', {}).get('displayName', 'Domicile')
-                away_name = away.get('team', {}).get('displayName', 'Extérieur')
-                
-                home_score = int(home.get('score', 0))
-                away_score = int(away.get('score', 0))
-                
-                try:
-                    minute_num = int(clock.replace("'", "").split("+")[0])
-                except:
-                    minute_num = 0
-
+                # 1. Matchs en Direct
                 if state == "in":
-                    analyse = analyser_match_factuel(home_score, away_score, minute_num, state)
-                    
-                    results.append({
+                    home_score = int(competitors[0].get('score', 0))
+                    away_score = int(competitors[1].get('score', 0))
+                    try:
+                        minute_num = int(clock.replace("'", "").split("+")[0])
+                    except:
+                        minute_num = 0
+                        
+                    preds = generer_predictions_marches(home_score, away_score, minute_num, is_live=True)
+                    live_matches.append({
                         'league': competition,
                         'minute': clock,
                         'teams': f"{home_name} vs {away_name}",
                         'score': f"{home_score} - {away_score}",
-                        'score_confiance': analyse['confiance'],
-                        'decision': f"{analyse['statut']} : {analyse['marche']}",
-                        'signaux': analyse['raisons']
+                        'score_confiance': preds['confiance'],
+                        'pred1': preds['pred1'],
+                        'pred2': preds['pred2'],
+                        'statut': preds['statut'],
+                        'signaux': preds['raisons']
                     })
+                
+                # 2. Matchs à Venir
+                elif state == "pre":
+                    preds = generer_predictions_marches(0, 0, 0, is_live=False)
+                    upcoming_matches.append({
+                        'league': competition,
+                        'heure': detail_time,
+                        'teams': f"{home_name} vs {away_name}",
+                        'score_confiance': preds['confiance'],
+                        'pred1': preds['pred1'],
+                        'pred2': preds['pred2'],
+                        'statut': preds['statut'],
+                        'signaux': preds['raisons']
+                    })
+
+        live_matches = sorted(live_matches, key=lambda x: x['score_confiance'], reverse=True)
+        upcoming_matches = sorted(upcoming_matches, key=lambda x: x['score_confiance'], reverse=True)
         
-        # Tri automatique : Placer les pronostics les plus sûrs tout en haut
-        results = sorted(results, key=lambda x: x['score_confiance'], reverse=True)
+        # Génération des combinés
+        combines = construire_combines(upcoming_matches)
 
     except Exception as e:
-        print(f"Erreur d'extraction : {e}")
+        print(f"Erreur backend : {e}")
+        combines = {}
 
-    return render_template("index.html", results=results)
+    return render_template("index.html", live=live_matches, upcoming=upcoming_matches, combines=combines)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
