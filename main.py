@@ -1,37 +1,28 @@
 import os
 from flask import Flask, render_template
 import requests
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# Championnats favoris + Coupes nationales et internationales
+# Championnats favoris (Noms clés pour le filtre)
 FAVORITE_LEAGUES = [
-    # Championnats
-    "english premier league", "english championship", 
-    "german bundesliga", "german 2. bundesliga",
-    "italian serie a", "swedish allsvenskan", "norwegian eliteserien",
-    "czech first league", "portuguese primeira liga", "danish superliga",
-    "scottish premiership", "french ligue 1", "russian premier league",
-    # Coupes
+    "premier league", "championship", "bundesliga", "serie a", 
+    "allsvenskan", "eliteserien", "first league", "primeira liga", 
+    "superliga", "premiership", "ligue 1", "ligue 2", "super league",
     "fa cup", "efl cup", "dfb pokal", "coppa italia", "coupe de france",
-    "copa del rey", "UEFA Champions League", "UEFA Europa League", "UEFA Conference League"
+    "copa del rey", "champions league", "europa league"
 ]
 
 def analyser_forme_et_classement(home_team, away_team, league_name):
-    """
-    Analyse les 5 derniers matchs, le classement et le type de compétition (Coupe vs Championnat).
-    """
+    """Analyse basée sur le croisement des critères."""
     is_cup_match = any(cup in league_name.lower() for cup in ["cup", "pokal", "coppa", "coupe", "copa", "champions league", "europa league"])
     
-    # Position théorique au classement
     rank_home = (hash(home_team) % 18) + 1
     rank_away = (hash(away_team) % 18) + 1
-    
-    # 5 derniers matchs (dynamique de buts)
     forme_home_goals = (hash(home_team) % 8) + 4
     forme_away_goals = (hash(away_team) % 8) + 3
     
-    # Calcul des xG et des facteurs tactiques
     xg_home = round(1.1 + (forme_home_goals / 5), 2)
     xg_away = round(0.9 + (forme_away_goals / 5), 2)
     
@@ -50,12 +41,8 @@ def analyser_forme_et_classement(home_team, away_team, league_name):
         'is_cup': is_cup_match
     }
 
-def croisement_criteres_pawa(stats, home_score=0, away_score=0, is_live=False):
-    """
-    Croisement des marchés BetPawa intégrant les spécificités des matchs de Coupe.
-    """
+def croisement_criteres_pawa(stats, is_live=False):
     raisons = []
-    
     if stats['is_cup']:
         raisons.append("Match de COUPE (Élimination directe / Enjeu maximal)")
     else:
@@ -66,10 +53,9 @@ def croisement_criteres_pawa(stats, home_score=0, away_score=0, is_live=False):
     if stats['calendrier']:
         raisons.append("Calendrier chargé : Efficacité xG favori en baisse, fragilité défensive accrue")
     
-    # Sélection des marchés
     if stats['is_cup'] and stats['btts_prob']:
         p1 = "BTTS - Oui (Les 2 marquent)"
-        p2 = "Over 2.5 Total Buts ou Prolongation"
+        p2 = "Over 2.5 Total Buts"
         conf = 88
         statut = "PRONOSTIC SÛR"
         raisons.append("Contexte Coupe : Match ouvert à forte intensité offensive")
@@ -126,67 +112,92 @@ def index():
     live_matches = []
     upcoming_matches = []
     
-    url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
+    # Dates : Aujourd'hui + Demain pour capturer tous les matchs à venir
+    today_str = datetime.utcnow().strftime("%Y%m%d")
+    tomorrow_str = (datetime.utcnow() + timedelta(days=1)).strftime("%Y%m%d")
     
-    try:
-        response = requests.get(url, timeout=10)
-        data = response.json()
+    dates_to_fetch = [today_str, tomorrow_str]
+    
+    for date_code in dates_to_fetch:
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={date_code}"
         
-        for idx, event in enumerate(data.get('events', [])):
-            competition = event.get('league', {}).get('name', 'Football')
-            status_info = event.get('status', {})
-            clock = status_info.get('displayClock', '0\'')
-            state = status_info.get('type', {}).get('state', '')
-            detail_time = status_info.get('type', {}).get('shortDetail', '')
+        try:
+            response = requests.get(url, timeout=10)
+            data = response.json()
             
-            competitors = event.get('competitions', [{}])[0].get('competitors', [])
-            if len(competitors) >= 2:
-                home_name = competitors[0].get('team', {}).get('displayName', 'Domicile')
-                away_name = competitors[1].get('team', {}).get('displayName', 'Extérieur')
+            for event in data.get('events', []):
+                # Récupération propre du nom de la compétition / pays
+                league_info = event.get('league', {})
+                competition_name = league_info.get('name', '')
+                abbrev = league_info.get('abbreviation', '')
                 
-                is_favorite = any(fav in competition.lower() for fav in FAVORITE_LEAGUES)
+                # Formatage clair du championnat
+                league_display = competition_name if competition_name else "Championnat Général"
+                if abbrev and abbrev.lower() not in league_display.lower():
+                    league_display += f" ({abbrev})"
                 
-                stats = analyser_forme_et_classement(home_name, away_name, competition)
+                status_info = event.get('status', {})
+                clock = status_info.get('displayClock', '0\'')
+                state = status_info.get('type', {}).get('state', '')
+                date_iso = event.get('date', '')
                 
-                if state == "in":
-                    home_score = int(competitors[0].get('score', 0))
-                    away_score = int(competitors[1].get('score', 0))
-                    preds = croisement_criteres_pawa(stats, home_score, away_score, is_live=True)
-                    live_matches.append({
-                        'league': competition,
-                        'is_fav': is_favorite,
-                        'minute': clock,
-                        'teams': f"{home_name} vs {away_name}",
-                        'score': f"{home_score} - {away_score}",
-                        'score_confiance': preds['conf'],
-                        'pred1': preds['p1'],
-                        'pred2': preds['p2'],
-                        'statut': preds['statut'],
-                        'signaux': preds['raisons']
-                    })
+                # Conversion propre de l'heure du match
+                heure_affiche = "À déterminer"
+                if date_iso:
+                    try:
+                        dt = datetime.strptime(date_iso, "%Y-%m-%dT%H:%MZ")
+                        heure_affiche = dt.strftime("%d/%m à %H:%H GMT")
+                    except:
+                        heure_affiche = status_info.get('type', {}).get('shortDetail', 'À venir')
                 
-                elif state == "pre":
-                    preds = croisement_criteres_pawa(stats, is_live=False)
-                    upcoming_matches.append({
-                        'league': competition,
-                        'is_fav': is_favorite,
-                        'heure': detail_time,
-                        'teams': f"{home_name} vs {away_name}",
-                        'score_confiance': preds['conf'],
-                        'pred1': preds['p1'],
-                        'pred2': preds['p2'],
-                        'statut': preds['statut'],
-                        'signaux': preds['raisons']
-                    })
+                competitors = event.get('competitions', [{}])[0].get('competitors', [])
+                if len(competitors) >= 2:
+                    home_name = competitors[0].get('team', {}).get('displayName', 'Domicile')
+                    away_name = competitors[1].get('team', {}).get('displayName', 'Extérieur')
+                    
+                    is_favorite = any(fav in league_display.lower() for fav in FAVORITE_LEAGUES)
+                    
+                    stats = analyser_forme_et_classement(home_name, away_name, league_display)
+                    
+                    if state == "in":
+                        home_score = int(competitors[0].get('score', 0))
+                        away_score = int(competitors[1].get('score', 0))
+                        preds = croisement_criteres_pawa(stats, is_live=True)
+                        live_matches.append({
+                            'league': league_display,
+                            'is_fav': is_favorite,
+                            'minute': clock,
+                            'teams': f"{home_name} vs {away_name}",
+                            'score': f"{home_score} - {away_score}",
+                            'score_confiance': preds['conf'],
+                            'pred1': preds['p1'],
+                            'pred2': preds['p2'],
+                            'statut': preds['statut'],
+                            'signaux': preds['raisons']
+                        })
+                    
+                    elif state == "pre":
+                        preds = croisement_criteres_pawa(stats, is_live=False)
+                        upcoming_matches.append({
+                            'league': league_display,
+                            'is_fav': is_favorite,
+                            'heure': heure_affiche,
+                            'teams': f"{home_name} vs {away_name}",
+                            'score_confiance': preds['conf'],
+                            'pred1': preds['p1'],
+                            'pred2': preds['p2'],
+                            'statut': preds['statut'],
+                            'signaux': preds['raisons']
+                        })
 
-        live_matches = sorted(live_matches, key=lambda x: (x['is_fav'], x['score_confiance']), reverse=True)
-        upcoming_matches = sorted(upcoming_matches, key=lambda x: (x['is_fav'], x['score_confiance']), reverse=True)
-        
-        combines = construire_combines(upcoming_matches)
+        except Exception as e:
+            print(f"Erreur API ({date_code}) : {e}")
 
-    except Exception as e:
-        print(f"Erreur : {e}")
-        combines = {}
+    # Tri : Championnats favoris d'abord, puis score de confiance
+    live_matches = sorted(live_matches, key=lambda x: (x['is_fav'], x['score_confiance']), reverse=True)
+    upcoming_matches = sorted(upcoming_matches, key=lambda x: (x['is_fav'], x['score_confiance']), reverse=True)
+    
+    combines = construire_combines(upcoming_matches)
 
     return render_template("index.html", live=live_matches, upcoming=upcoming_matches, combines=combines)
 
