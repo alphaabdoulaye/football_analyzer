@@ -3,44 +3,103 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Football Live Analyzer</title>
+    <title>Football Live & Predictions Analyzer</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 15px; }
-        h1 { text-align: center; color: #38bdf8; font-size: 1.5rem; margin-bottom: 20px; }
-        .card { background: #1e293b; border-radius: 12px; padding: 15px; margin-bottom: 15px; border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-        .card.confirmed { border-left-color: #22c55e; }
-        .card.strong { border-left-color: #eab308; }
-        .card.watch { border-left-color: #f97316; }
-        .header-row { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-bottom: 10px; }
-        .league { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; }
-        .minute { background: #0284c7; color: #fff; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 0.8rem; }
-        .teams { font-size: 1.1rem; font-weight: bold; margin-bottom: 5px; }
-        .score { font-size: 1.3rem; color: #38bdf8; font-weight: bold; margin-bottom: 10px; }
-        .confidence { font-weight: bold; font-size: 0.95rem; margin-bottom: 8px; }
-        .decision { background: #0f172a; padding: 8px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; color: #38bdf8; margin-bottom: 10px; }
-        .signals { list-style: none; padding-left: 0; margin: 0; font-size: 0.85rem; color: #cbd5e1; }
-        .signals li { margin-bottom: 4px; display: flex; align-items: center; }
-        .signals li::before { content: "•"; color: #38bdf8; font-weight: bold; display: inline-block; width: 1em; }
+        body { font-family: Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 15px; }
+        h1 { text-align: center; color: #58a6ff; font-size: 22px; }
+        .tabs { display: flex; justify-content: space-around; margin-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .tab-btn { background: none; border: none; color: #8b949e; padding: 10px; font-size: 14px; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { color: #58a6ff; border-bottom: 2px solid #58a6ff; }
+        .content-section { display: none; }
+        .content-section.active { display: block; }
+        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+        .badge { background-color: #238636; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; float: right; }
+        .teams { font-size: 16px; font-weight: bold; color: #f0f6fc; margin: 5px 0; }
+        .preds { background-color: #21262d; padding: 8px; border-radius: 6px; margin-top: 8px; }
+        .pred-title { color: #3fb950; font-weight: bold; font-size: 13px; }
+        ul { margin: 5px 0; padding-left: 18px; font-size: 12px; color: #8b949e; }
     </style>
 </head>
 <body>
+
     <h1>Football Live Analyzer</h1>
-    {% for match in results %}
-    <div class="card {% if match.score_confiance >= 80 %}confirmed{% elif match.score_confiance >= 60 %}strong{% elif match.score_confiance >= 40 %}watch{% endif %}">
-        <div class="header-row">
-            <span class="league">{{ match.league }}</span>
-            <span class="minute">{{ match.minute }}'</span>
-        </div>
-        <div class="teams">{{ match.teams }}</div>
-        <div class="score">Score : {{ match.score }}</div>
-        <div class="confidence">Indice de confiance : {{ match.score_confiance }}%</div>
-        <div class="decision">{{ match.decision }}</div>
-        <ul class="signals">
-            {% for signal in match.signaux %}
-            <li>{{ signal }}</li>
-            {% endfor %}
-        </ul>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="openTab('live')">Directs</button>
+        <button class="tab-btn" onclick="openTab('upcoming')">À Venir</button>
+        <button class="tab-btn" onclick="openTab('combines')">Combinés (5 à 100)</button>
     </div>
-    {% endfor %}
+
+    <!-- ONGLET 1 : DIRECTS -->
+    <div id="live" class="content-section active">
+        {% for match in live %}
+        <div class="card">
+            <span class="badge">{{ match.statut }} ({{ match.score_confiance }}%)</span>
+            <small>{{ match.league }} - {{ match.minute }}</small>
+            <div class="teams">{{ match.teams }} | {{ match.score }}</div>
+            <div class="preds">
+                <div class="pred-title">1. {{ match.pred1 }}</div>
+                <div class="pred-title">2. {{ match.pred2 }}</div>
+            </div>
+            <ul>
+                {% for signal in match.signaux %}
+                <li>{{ signal }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% else %}
+        <p>Aucun match en direct actuellement.</p>
+        {% endfor %}
+    </div>
+
+    <!-- ONGLET 2 : À VENIR -->
+    <div id="upcoming" class="content-section">
+        {% for match in upcoming %}
+        <div class="card">
+            <span class="badge">{{ match.statut }}</span>
+            <small>{{ match.league }} - {{ match.heure }}</small>
+            <div class="teams">{{ match.teams }}</div>
+            <div class="preds">
+                <div class="pred-title">Issue 1 : {{ match.pred1 }}</div>
+                <div class="pred-title">Issue 2 : {{ match.pred2 }}</div>
+            </div>
+        </div>
+        {% else %}
+        <p>Aucun match à venir chargé.</p>
+        {% endfor %}
+    </div>
+
+    <!-- ONGLET 3 : COMBINÉS -->
+    <div id="combines" class="content-section">
+        {% for key, list in combines.items() %}
+            <h3 style="color: #d29922; border-bottom: 1px solid #30363d; padding-bottom: 4px;">Combinés {{ key.replace('_', ' ').upper() }}</h3>
+            {% for coupon in list %}
+            <div class="card" style="border-left: 3px solid #d29922;">
+                <strong>{{ coupon.nom }}</strong>
+                <ul>
+                    {% for m in coupon.matchs %}
+                    <li>{{ m.teams }} ➔ <b>{{ m.pred1 }}</b></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+
+    <script>
+        function openTab(tabName) {
+            var i, content, tabbtns;
+            content = document.getElementsByClassName("content-section");
+            for (i = 0; i < content.length; i++) {
+                content[i].classList.remove("active");
+            }
+            tabbtns = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tabbtns.length; i++) {
+                tabbtns[i].classList.remove("active");
+            }
+            document.getElementById(tabName).classList.add("active");
+            event.currentTarget.classList.add("active");
+        }
+    </script>
 </body>
 </html>
