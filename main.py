@@ -19,7 +19,7 @@ def determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a):
     
     raisons = []
     if rank_h > 0 and rank_a > 0:
-        raisons.append(f"Rang : {rank_h}e vs {rank_a}e")
+        raisons.append(f"Rang réel : {rank_h}e vs {rank_a}e")
     raisons.append(f"xG : {xg_h:.2f} (Dom) - {xg_a:.2f} (Ext)")
 
     if btts_prob and fragilite:
@@ -86,23 +86,23 @@ def analyser_evenement(ev):
 def index():
     live_matches = []
     upcoming_matches = []
-    debug_msg = ""
+    
+    # Formats de date testés pour la compatibilité Sofascore
+    today_ddmmyyyy = datetime.utcnow().strftime("%d/%m/%Y")
+    today_yyyymmdd = datetime.utcnow().strftime("%Y-%m-%d")
 
-    if not RAPIDAPI_KEY:
-        debug_msg = "Clé API non trouvée dans les variables d'environnement."
-    else:
-        # Test direct sur l'endpoint des matchs en direct et programmés
-        urls = [
-            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/events/live",
-            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{datetime.utcnow().strftime('%Y-%m-%d')}"
-        ]
-        
-        for url in urls:
+    endpoints = [
+        f"https://{RAPIDAPI_HOST}/api/v1/sport/football/events/live",
+        f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{today_ddmmyyyy}",
+        f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{today_yyyymmdd}"
+    ]
+
+    if RAPIDAPI_KEY:
+        for url in endpoints:
             try:
-                res = requests.get(url, headers=HEADERS, timeout=10)
+                res = requests.get(url, headers=HEADERS, timeout=8)
                 if res.status_code == 200:
-                    data = res.json()
-                    events = data.get('events', [])
+                    events = res.json().get('events', [])
                     for ev in events:
                         item, m_type = analyser_evenement(ev)
                         if item:
@@ -110,21 +110,22 @@ def index():
                                 live_matches.append(item)
                             else:
                                 upcoming_matches.append(item)
-                else:
-                    debug_msg += f" HTTP {res.status_code} sur {url}."
             except Exception as e:
-                debug_msg += f" Erreur: {str(e)}."
+                print(f"Erreur lors de l'appel {url}: {e}")
 
-    # Déduplication
+    # Elimination des doublons
     unique_upcoming = list({m['teams']: m for m in upcoming_matches}.values())
     unique_live = list({m['teams']: m for m in live_matches}.values())
+
+    # Tri par score de confiance
+    unique_upcoming = sorted(unique_upcoming, key=lambda x: x['score_confiance'], reverse=True)
+    unique_live = sorted(unique_live, key=lambda x: x['score_confiance'], reverse=True)
 
     return render_template(
         "index.html", 
         live=unique_live, 
         upcoming=unique_upcoming, 
-        combines={},
-        debug=debug_msg
+        combines={}
     )
 
 if __name__ == "__main__":
