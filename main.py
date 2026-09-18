@@ -4,6 +4,54 @@ import requests
 
 app = Flask(__name__)
 
+def analyser_marche(home_score, away_score, minute_num, state):
+    """Analyse le match et retourne le marché exact à jouer ainsi que le niveau de confiance."""
+    total_goals = home_score + away_score
+    
+    # 1. Marché Over 0.5 (Matchs nuls 0-0 en 2nde mi-temps)
+    if minute_num >= 55 and total_goals == 0:
+        return {
+            'marche': "OVER 0.5 (Prochain But)",
+            'confiance': 85,
+            'statut_surete': "MATCH SÛR",
+            'raison': "0-0 après la 55' : probabilité très élevée d'au moins 1 but d'ici la fin."
+        }
+    
+    # 2. Marché BTTS (Les deux équipes marquent)
+    elif minute_num <= 65 and (home_score == 0 or away_score == 0) and total_goals == 1:
+        return {
+            'marche': "BTTS - OUI (Les 2 équipes marquent)",
+            'confiance': 78,
+            'statut_surete': "MATCH SÛR",
+            'raison': "Score 1-0 ou 0-1 : forte pression de l'équipe menée pour égaliser."
+        }
+        
+    # 3. Marché Over 2.5
+    elif total_goals >= 2 and minute_num <= 50:
+        return {
+            'marche': "OVER 2.5 (Total Buts)",
+            'confiance': 80,
+            'statut_surete': "MATCH SÛR",
+            'raison': "Rythme très offensif : au moins 2 buts inscrits en 1ère mi-temps."
+        }
+
+    # 4. Marché Opportunité modérée
+    elif minute_num >= 35 and total_goals == 0:
+        return {
+            'marche': "OVER 0.5 Mi-Temps / Fin de match",
+            'confiance': 68,
+            'statut_surete': "À SURVEILLER",
+            'raison': "Fin de 1ère mi-temps sans but, intensité à suivre."
+        }
+
+    # Par défaut
+    return {
+        'marche': "PAS DE MARCHÉ SÛR (Observer)",
+        'confiance': 50,
+        'statut_surete': "NE PAS JOUER",
+        'raison': "Conditions statistiques non réunies pour un pari à forte confiance."
+    }
+
 @app.route("/")
 def index():
     results = []
@@ -16,7 +64,6 @@ def index():
         for event in data.get('events', []):
             competition = event.get('league', {}).get('name', 'Football')
             status_info = event.get('status', {})
-            period = status_info.get('period', 0)
             clock = status_info.get('displayClock', '0\'')
             state = status_info.get('type', {}).get('state', '')
             
@@ -30,50 +77,31 @@ def index():
                 
                 home_score = int(home.get('score', 0))
                 away_score = int(away.get('score', 0))
-                total_goals = home_score + away_score
                 
-                # Récupération de la minute numérique
                 try:
                     minute_num = int(clock.replace("'", "").split("+")[0])
                 except:
                     minute_num = 0
 
-                # Calcul dynamique selon l'avancement du match
-                score_confiance = 50
-                decision = "Match sous observation"
-                signaux = []
-
-                if state == "in": # Match en cours
-                    signaux.append(f"Match en direct ({clock})")
+                if state == "in":
+                    analyse = analyser_marche(home_score, away_score, minute_num, state)
                     
-                    if minute_num >= 55 and total_goals == 0:
-                        score_confiance = 82
-                        decision = "CONFIRMÉ : Over 0.5 / Prochain But Imminent"
-                        signaux.append("Anomalie : 0-0 après la 55' minute")
-                        signaux.append("Pression offensive en hausse")
-                    elif minute_num >= 35 and total_goals == 0:
-                        score_confiance = 68
-                        decision = "À SURVEILLER : Pression avant mi-temps"
-                        signaux.append("Match fermé, opportunité d'ouverture")
-                    elif total_goals >= 2:
-                        score_confiance = 75
-                        decision = "CONFIRMÉ : Match ouvert (Over 2.5)"
-                        signaux.append(f"Rythme élevé : {total_goals} buts déjà marqués")
-                    else:
-                        score_confiance = 55
-                        decision = "ANALYSE : Observation phase initiale"
-                else:
-                    signaux.append(f"Statut : {status_info.get('type', {}).get('shortDetail', 'Programmé')}")
+                    results.append({
+                        'league': competition,
+                        'minute': clock,
+                        'teams': f"{home_name} vs {away_name}",
+                        'score': f"{home_score} - {away_score}",
+                        'score_confiance': analyse['confiance'],
+                        'decision': f"{analyse['statut_surete']} : {analyse['marche']}",
+                        'signaux': [
+                            f"Marché conseillé : {analyse['marche']}",
+                            f"Analyse : {analyse['raison']}"
+                        ]
+                    })
+        
+        # Tri : afficher les matchs sûrs en premier
+        results = sorted(results, key=lambda x: x['score_confiance'], reverse=True)
 
-                results.append({
-                    'league': competition,
-                    'minute': clock if state == "in" else "FIN",
-                    'teams': f"{home_name} vs {away_name}",
-                    'score': f"{home_score} - {away_score}",
-                    'score_confiance': score_confiance,
-                    'decision': decision,
-                    'signaux': signaux
-                })
     except Exception as e:
         print(f"Erreur : {e}")
 
