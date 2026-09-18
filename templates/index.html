@@ -13,7 +13,9 @@
         .content-section { display: none; }
         .content-section.active { display: block; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+        .card.favorite { border-left: 4px solid #f1e05a; }
         .badge { background-color: #238636; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; float: right; }
+        .league-title { color: #58a6ff; font-weight: bold; font-size: 13px; display: block; margin-bottom: 4px; }
         .teams { font-size: 16px; font-weight: bold; color: #f0f6fc; margin: 5px 0; }
         .preds { background-color: #21262d; padding: 8px; border-radius: 6px; margin-top: 8px; }
         .pred-title { color: #3fb950; font-weight: bold; font-size: 13px; }
@@ -30,12 +32,13 @@
         <button class="tab-btn" onclick="openTab('combines')">Combinés (5 à 100)</button>
     </div>
 
-    <!-- ONGLET 1 : DIRECTS -->
+    <!-- DIRECTS -->
     <div id="live" class="content-section active">
         {% for match in live %}
-        <div class="card">
+        <div class="card {% if match.is_fav %}favorite{% endif %}">
             <span class="badge">{{ match.statut }} ({{ match.score_confiance }}%)</span>
-            <small>{{ match.league }} - {{ match.minute }}</small>
+            <span class="league-title">🏆 {{ match.league }}</span>
+            <small>Temps : {{ match.minute }}</small>
             <div class="teams">{{ match.teams }} | {{ match.score }}</div>
             <div class="preds">
                 <div class="pred-title">1. {{ match.pred1 }}</div>
@@ -52,33 +55,39 @@
         {% endfor %}
     </div>
 
-    <!-- ONGLET 2 : À VENIR -->
+    <!-- À VENIR -->
     <div id="upcoming" class="content-section">
         {% for match in upcoming %}
-        <div class="card">
-            <span class="badge">{{ match.statut }}</span>
-            <small>{{ match.league }} - {{ match.heure }}</small>
+        <div class="card {% if match.is_fav %}favorite{% endif %}">
+            <span class="badge">{{ match.statut }} ({{ match.score_confiance }}%)</span>
+            <span class="league-title">🏆 {{ match.league }}</span>
+            <small>Heure : {{ match.heure }}</small>
             <div class="teams">{{ match.teams }}</div>
             <div class="preds">
-                <div class="pred-title">Issue 1 : {{ match.pred1 }}</div>
-                <div class="pred-title">Issue 2 : {{ match.pred2 }}</div>
+                <div class="pred-title">Option 1 : {{ match.pred1 }}</div>
+                <div class="pred-title">Option 2 : {{ match.pred2 }}</div>
             </div>
+            <ul>
+                {% for signal in match.signaux %}
+                <li>{{ signal }}</li>
+                {% endfor %}
+            </ul>
         </div>
         {% else %}
-        <p>Aucun match à venir chargé.</p>
+        <p>Aucun match à venir disponible.</p>
         {% endfor %}
     </div>
 
-    <!-- ONGLET 3 : COMBINÉS -->
+    <!-- COMBINÉS -->
     <div id="combines" class="content-section">
         {% for key, list in combines.items() %}
             <h3 style="color: #d29922; border-bottom: 1px solid #30363d; padding-bottom: 4px;">Combinés {{ key.replace('_', ' ').upper() }}</h3>
             {% for coupon in list %}
             <div class="card" style="border-left: 3px solid #d29922;">
-                <strong>{{ coupon.nom }}</strong>
+                <strong>{{ coupon.nom }} (Côte globale : ~{{ coupon.cote_totale }})</strong>
                 <ul>
                     {% for m in coupon.matchs %}
-                    <li>{{ m.teams }} ➔ <b>{{ m.pred1 }}</b></li>
+                    <li><b>[{{ m.league }}]</b> {{ m.teams }} ➔ <span style="color: #3fb950;">{{ m.pred1 }}</span></li>
                     {% endfor %}
                 </ul>
             </div>
