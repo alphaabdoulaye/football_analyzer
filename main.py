@@ -5,7 +5,6 @@ from flask import Flask, render_template
 
 app = Flask(__name__)
 
-# Variable d'environnement pour Render
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
 RAPIDAPI_HOST = "sportapi7.p.rapidapi.com"
 
@@ -15,20 +14,19 @@ HEADERS = {
 }
 
 def determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a):
-    """Calcule les pronostics selon vos critères (BTTS, xG, fragilité défensive, classement)."""
     btts_prob = (xg_h >= 1.3 or xg_a >= 1.1) or abs(rank_h - rank_a) <= 3
     fragilite = (rank_h > 8 or rank_a > 8)
     
-    raisons = [
-        f"Rang estimé : {rank_h}e vs {rank_a}e",
-        f"xG : {xg_h:.2f} (Dom) - {xg_a:.2f} (Ext)"
-    ]
+    raisons = []
+    if rank_h > 0 and rank_a > 0:
+        raisons.append(f"Rang réel : {rank_h}e vs {rank_a}e")
+    raisons.append(f"xG estimés : {xg_h:.2f} (Dom) - {xg_a:.2f} (Ext)")
 
     if btts_prob and fragilite:
         p1, p2 = "BTTS - Oui (Les 2 marquent)", "Plus de 2.5 buts"
         conf, statut = 88, "PRONOSTIC SÛR"
         raisons.append("BTTS Validé : Attaque efficace + Fragilité défensive")
-    elif rank_h < 5 and rank_a > 10:
+    elif rank_h > 0 and rank_h < 5 and rank_a > 10:
         p1, p2 = "Victoire Domicile", "Plus de 1.5 buts"
         conf, statut = 84, "PRONOSTIC SÛR"
         raisons.append("Avantage net du favori à domicile")
@@ -39,41 +37,45 @@ def determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a):
 
     return {'p1': p1, 'p2': p2, 'conf': conf, 'statut': statut, 'raisons': " | ".join(raisons)}
 
-def traiter_evenements(events_list):
-    """Formatage des données reçues depuis l'API Sofascore."""
+def extraire_matchs(events):
     live = []
     upcoming = []
     
-    for ev in events_list:
+    for ev in events:
         try:
             tournament = ev.get('tournament', {})
             category = tournament.get('category', {})
             
-            cat_name = category.get('name', '')
-            tour_name = tournament.get('name', '')
-            league_title = f"{cat_name} - {tour_name}".strip(" - ") if cat_name else tour_name
-            if not league_title:
-                league_title = "Football"
+            # Filtre uniquement le Football (sport id 1 chez Sofascore)
+            sport_id = category.get('sport', {}).get('id', 1)
+            if sport_id != 1 and tournament.get('category', {}).get('slug') != 'football':
+                continue
 
-            home_team = ev.get('homeTeam', {}).get('name', 'Équipe Dom')
-            away_team = ev.get('awayTeam', {}).get('name', 'Équipe Ext')
+            league_title = f"{category.get('name', '')} - {tournament.get('name', '')}".strip(" - ")
             
+            home_team = ev.get('homeTeam', {}).get('name', '')
+            away_team = ev.get('awayTeam', {}).get('name', '')
+            
+            if not home_team or not away_team:
+                continue
+
+            # Récupération des vrais rangs s'ils sont fournis dans l'événement
+            rank_h = ev.get('homeTeam', {}).get('ranking', 0)
+            rank_a = ev.get('awayTeam', {}).get('ranking', 0)
+            
+            # Si le rang n'est pas fourni dans le flux direct, calcul de secours neutre
+            if not rank_h: rank_h = 8
+            if not rank_a: rank_a = 8
+
+            xg_h = round(1.2 + (15 - rank_h) * 0.05, 2)
+            xg_a = round(1.0 + (15 - rank_a) * 0.05, 2)
+
             start_ts = ev.get('startTimestamp')
-            if start_ts:
-                dt = datetime.utcfromtimestamp(start_ts)
-                heure_str = dt.strftime("%d/%m à %H:%M GMT")
-            else:
-                heure_str = "Aujourd'hui"
-                
-            rank_h = (abs(hash(home_team)) % 15) + 1
-            rank_a = (abs(hash(away_team)) % 15) + 1
-            xg_h = round(1.2 + (rank_a / 12), 2)
-            xg_a = round(1.0 + (rank_h / 12), 2)
-            
+            heure_str = datetime.utcfromtimestamp(start_ts).strftime("%d/%m à %H:%M GMT") if start_ts else "Aujourd'hui"
+
             prono = determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a)
             
-            status_obj = ev.get('status', {})
-            status_type = status_obj.get('type', '')
+            status_type = ev.get('status', {}).get('type', '')
             
             match_item = {
                 'league': league_title,
@@ -85,7 +87,7 @@ def traiter_evenements(events_list):
                 'statut': prono['statut'],
                 'signaux': prono['raisons']
             }
-            
+
             if status_type in ['inprogress', 'live']:
                 score_h = ev.get('homeScore', {}).get('current', 0)
                 score_a = ev.get('awayScore', {}).get('current', 0)
@@ -103,51 +105,35 @@ def index():
     live_matches = []
     upcoming_matches = []
     
-    # 1. Date du jour au format ISO YYYY-MM-DD
     today = datetime.utcnow().strftime("%Y-%m-%d")
     
-    # 2. Appel à l'API Sofascore (Events de la journée)
     if RAPIDAPI_KEY:
-        try:
-            url = f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{today}"
-            res = requests.get(url, headers=HEADERS, timeout=7)
-            if res.status_code == 200:
-                data = res.json()
-                events = data.get('events', [])
-                live_matches, upcoming_matches = traiter_evenements(events)
-        except Exception as e:
-            print(f"Erreur appel API: {e}")
-
-    # 3. Mode de secours (Garantit que le site affiche TOUJOURS des matchs réels si l'API est indisponible)
-    if not live_matches and not upcoming_matches:
-        matchs_du_jour = [
-            ("Angleterre - Premier League", "Tottenham vs Aston Villa", "Aujourd'hui à 15:00 GMT", 1.85, 1.45, 4, 6),
-            ("Angleterre - Premier League", "Brighton vs Arsenal", "Aujourd'hui à 17:30 GMT", 1.25, 1.95, 8, 2),
-            ("Espagne - LaLiga", "Real Madrid vs Real Betis", "Aujourd'hui à 19:00 GMT", 2.10, 0.90, 1, 7),
-            ("Espagne - LaLiga", "Sevilla vs Barcelona", "Demain à 19:00 GMT", 1.35, 2.20, 9, 3),
-            ("Italie - Serie A", "Inter vs AC Milan", "Demain à 18:45 GMT", 1.70, 1.40, 2, 4),
-            ("France - Ligue 1", "PSG vs Marseille", "Demain à 18:45 GMT", 2.10, 1.30, 1, 5)
+        # Essai 1 : Format standard YYYY-MM-DD
+        urls = [
+            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{today}",
+            f"https://{RAPIDAPI_HOST}/api/v1/football/events/live"
         ]
         
-        for league, teams, heure, xgh, xga, rh, ra in matchs_du_jour:
-            h_name, a_name = teams.split(" vs ")
-            prono = determiner_pronostic(h_name, a_name, xgh, xga, rh, ra)
-            upcoming_matches.append({
-                'league': league,
-                'teams': teams,
-                'heure': heure,
-                'score_confiance': prono['conf'],
-                'pred1': prono['p1'],
-                'pred2': prono['p2'],
-                'statut': prono['statut'],
-                'signaux': prono['raisons']
-            })
+        for url in urls:
+            try:
+                res = requests.get(url, headers=HEADERS, timeout=8)
+                if res.status_code == 200:
+                    events = res.json().get('events', [])
+                    l, u = extraire_matchs(events)
+                    live_matches.extend(l)
+                    upcoming_matches.extend(u)
+            except Exception as e:
+                print(f"Erreur API: {e}")
+
+    # Si l'API répond correctement, on supprime les doublons
+    upcoming_matches = {m['teams']: m for m in upcoming_matches}.values()
+    live_matches = {m['teams']: m for m in live_matches}.values()
 
     # Tri par score de confiance
     live_matches = sorted(live_matches, key=lambda x: x['score_confiance'], reverse=True)
     upcoming_matches = sorted(upcoming_matches, key=lambda x: x['score_confiance'], reverse=True)
 
-    return render_template("index.html", live=live_matches, upcoming=upcoming_matches, combines={})
+    return render_template("index.html", live=list(live_matches), upcoming=list(upcoming_matches), combines={})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
