@@ -19,8 +19,8 @@ def determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a):
     
     raisons = []
     if rank_h > 0 and rank_a > 0:
-        raisons.append(f"Rang réel : {rank_h}e vs {rank_a}e")
-    raisons.append(f"xG estimés : {xg_h:.2f} (Dom) - {xg_a:.2f} (Ext)")
+        raisons.append(f"Rang : {rank_h}e vs {rank_a}e")
+    raisons.append(f"xG : {xg_h:.2f} (Dom) - {xg_a:.2f} (Ext)")
 
     if btts_prob and fragilite:
         p1, p2 = "BTTS - Oui (Les 2 marquent)", "Plus de 2.5 buts"
@@ -37,103 +37,95 @@ def determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a):
 
     return {'p1': p1, 'p2': p2, 'conf': conf, 'statut': statut, 'raisons': " | ".join(raisons)}
 
-def extraire_matchs(events):
-    live = []
-    upcoming = []
-    
-    for ev in events:
-        try:
-            tournament = ev.get('tournament', {})
-            category = tournament.get('category', {})
-            
-            # Filtre uniquement le Football (sport id 1 chez Sofascore)
-            sport_id = category.get('sport', {}).get('id', 1)
-            if sport_id != 1 and tournament.get('category', {}).get('slug') != 'football':
-                continue
+def analyser_evenement(ev):
+    try:
+        tournament = ev.get('tournament', {})
+        category = tournament.get('category', {})
+        league_title = f"{category.get('name', '')} - {tournament.get('name', '')}".strip(" - ")
+        
+        home_team = ev.get('homeTeam', {}).get('name', '')
+        away_team = ev.get('awayTeam', {}).get('name', '')
+        
+        if not home_team or not away_team:
+            return None, None
 
-            league_title = f"{category.get('name', '')} - {tournament.get('name', '')}".strip(" - ")
-            
-            home_team = ev.get('homeTeam', {}).get('name', '')
-            away_team = ev.get('awayTeam', {}).get('name', '')
-            
-            if not home_team or not away_team:
-                continue
+        rank_h = ev.get('homeTeam', {}).get('ranking', 8) or 8
+        rank_a = ev.get('awayTeam', {}).get('ranking', 8) or 8
 
-            # Récupération des vrais rangs s'ils sont fournis dans l'événement
-            rank_h = ev.get('homeTeam', {}).get('ranking', 0)
-            rank_a = ev.get('awayTeam', {}).get('ranking', 0)
-            
-            # Si le rang n'est pas fourni dans le flux direct, calcul de secours neutre
-            if not rank_h: rank_h = 8
-            if not rank_a: rank_a = 8
+        xg_h = round(1.2 + (15 - rank_h) * 0.05, 2)
+        xg_a = round(1.0 + (15 - rank_a) * 0.05, 2)
 
-            xg_h = round(1.2 + (15 - rank_h) * 0.05, 2)
-            xg_a = round(1.0 + (15 - rank_a) * 0.05, 2)
+        start_ts = ev.get('startTimestamp')
+        heure_str = datetime.utcfromtimestamp(start_ts).strftime("%d/%m à %H:%M GMT") if start_ts else "Aujourd'hui"
 
-            start_ts = ev.get('startTimestamp')
-            heure_str = datetime.utcfromtimestamp(start_ts).strftime("%d/%m à %H:%M GMT") if start_ts else "Aujourd'hui"
+        prono = determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a)
+        status_type = ev.get('status', {}).get('type', '')
+        
+        match_item = {
+            'league': league_title if league_title else "Football",
+            'teams': f"{home_team} vs {away_team}",
+            'heure': heure_str,
+            'score_confiance': prono['conf'],
+            'pred1': prono['p1'],
+            'pred2': prono['p2'],
+            'statut': prono['statut'],
+            'signaux': prono['raisons']
+        }
 
-            prono = determiner_pronostic(home_team, away_team, xg_h, xg_a, rank_h, rank_a)
-            
-            status_type = ev.get('status', {}).get('type', '')
-            
-            match_item = {
-                'league': league_title,
-                'teams': f"{home_team} vs {away_team}",
-                'heure': heure_str,
-                'score_confiance': prono['conf'],
-                'pred1': prono['p1'],
-                'pred2': prono['p2'],
-                'statut': prono['statut'],
-                'signaux': prono['raisons']
-            }
-
-            if status_type in ['inprogress', 'live']:
-                score_h = ev.get('homeScore', {}).get('current', 0)
-                score_a = ev.get('awayScore', {}).get('current', 0)
-                match_item['score'] = f"{score_h} - {score_a}"
-                live.append(match_item)
-            else:
-                upcoming.append(match_item)
-        except Exception:
-            continue
-            
-    return live, upcoming
+        if status_type in ['inprogress', 'live']:
+            score_h = ev.get('homeScore', {}).get('current', 0)
+            score_a = ev.get('awayScore', {}).get('current', 0)
+            match_item['score'] = f"{score_h} - {score_a}"
+            return match_item, 'live'
+        else:
+            return match_item, 'upcoming'
+    except Exception:
+        return None, None
 
 @app.route("/")
 def index():
     live_matches = []
     upcoming_matches = []
-    
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    
-    if RAPIDAPI_KEY:
-        # Essai 1 : Format standard YYYY-MM-DD
+    debug_msg = ""
+
+    if not RAPIDAPI_KEY:
+        debug_msg = "Clé API non trouvée dans les variables d'environnement."
+    else:
+        # Test direct sur l'endpoint des matchs en direct et programmés
         urls = [
-            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{today}",
-            f"https://{RAPIDAPI_HOST}/api/v1/football/events/live"
+            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/events/live",
+            f"https://{RAPIDAPI_HOST}/api/v1/sport/football/scheduled-events/{datetime.utcnow().strftime('%Y-%m-%d')}"
         ]
         
         for url in urls:
             try:
-                res = requests.get(url, headers=HEADERS, timeout=8)
+                res = requests.get(url, headers=HEADERS, timeout=10)
                 if res.status_code == 200:
-                    events = res.json().get('events', [])
-                    l, u = extraire_matchs(events)
-                    live_matches.extend(l)
-                    upcoming_matches.extend(u)
+                    data = res.json()
+                    events = data.get('events', [])
+                    for ev in events:
+                        item, m_type = analyser_evenement(ev)
+                        if item:
+                            if m_type == 'live':
+                                live_matches.append(item)
+                            else:
+                                upcoming_matches.append(item)
+                else:
+                    debug_msg += f" HTTP {res.status_code} sur {url}."
             except Exception as e:
-                print(f"Erreur API: {e}")
+                debug_msg += f" Erreur: {str(e)}."
 
-    # Si l'API répond correctement, on supprime les doublons
-    upcoming_matches = {m['teams']: m for m in upcoming_matches}.values()
-    live_matches = {m['teams']: m for m in live_matches}.values()
+    # Déduplication
+    unique_upcoming = list({m['teams']: m for m in upcoming_matches}.values())
+    unique_live = list({m['teams']: m for m in live_matches}.values())
 
-    # Tri par score de confiance
-    live_matches = sorted(live_matches, key=lambda x: x['score_confiance'], reverse=True)
-    upcoming_matches = sorted(upcoming_matches, key=lambda x: x['score_confiance'], reverse=True)
-
-    return render_template("index.html", live=list(live_matches), upcoming=list(upcoming_matches), combines={})
+    return render_template(
+        "index.html", 
+        live=unique_live, 
+        upcoming=unique_upcoming, 
+        combines={},
+        debug=debug_msg
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
