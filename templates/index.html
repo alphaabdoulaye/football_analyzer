@@ -3,62 +3,159 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyse de Match de Football</title>
+    <title>Analyseur Pro - Pronostics & Matchs</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f6f9; }
-        .container { max-width: 700px; margin: auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { text-align: center; color: #1e3c72; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        .checkbox-group { margin: 15px 0; }
-        button { width: 100%; padding: 12px; background-color: #1e3c72; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
-        button:hover { background-color: #2a5298; }
-        .result-card { margin-top: 25px; padding: 15px; background: #eef2f5; border-left: 5px solid #1e3c72; border-radius: 4px; }
-        .alert { color: #d9534f; font-weight: bold; }
+        :root { --primary: #1a2a3a; --accent: #27ae60; --bg: #f4f7f6; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
+        .app-container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { color: var(--primary); text-align: center; margin-bottom: 20px; }
+        
+        /* Navigation Onglets */
+        .tabs { display: flex; overflow-x: auto; gap: 8px; border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-bottom: 20px; }
+        .tab-btn { background: #e0e0e0; border: none; padding: 10px 16px; border-radius: 20px; cursor: pointer; white-space: nowrap; font-weight: bold; }
+        .tab-btn.active { background: var(--primary); color: white; }
+        
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        @media(max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        
+        .input-group { margin-bottom: 15px; }
+        label { display: block; font-weight: 600; margin-bottom: 5px; color: #333; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        
+        .btn-analyze { width: 100%; padding: 14px; background: var(--accent); color: white; border: none; border-radius: 6px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .btn-analyze:hover { background: #219150; }
+
+        /* Carte Pronostics */
+        .results-box { margin-top: 25px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background: #fafafa; display: none; }
+        .prono-card { background: #e8f8f5; border-left: 5px solid var(--accent); padding: 12px; margin: 10px 0; border-radius: 4px; }
+        .prono-title { font-weight: bold; color: #1e8449; }
+        .badge { background: var(--primary); color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Analyseur de Match en Direct</h1>
-        <form method="POST">
-            <div class="form-group">
-                <label for="team_a">Équipe Domicile / Favori :</label>
-                <input type="text" id="team_a" name="team_a" placeholder="Ex: Real Madrid" required>
-            </div>
-            <div class="form-group">
-                <label for="team_b">Équipe Extérieure / Adversaire :</label>
-                <input type="text" id="team_b" name="team_b" placeholder="Ex: FC Barcelone" required>
-            </div>
-            <div class="checkbox-group">
-                <label>
-                    <input type="checkbox" name="heavy_schedule"> Match en milieu de semaine / Calendrier chargé
-                </label>
-            </div>
-            <button type="submit">Lancer l'Analyse</button>
-        </form>
 
-        {% if result %}
-        <div class="result-card">
-            <h2>Résultat : {{ result.team_a }} vs {{ result.team_b }}</h2>
-            <p><strong>Probabilité BTTS :</strong> {{ result.btts_probability }}</p>
-            <p><strong>Tendance xG Favori :</strong> {{ result.xg_favorite_trend }}</p>
-            <p><strong>Fragilité Défensive :</strong> {{ result.defensive_vulnerability }}</p>
-            
-            {% if result.notes %}
-                <div class="alert">
-                    <ul>
-                    {% for note in result.notes %}
-                        <li>{{ note }}</li>
-                    {% endfor %}
-                    </ul>
-                </div>
-            {% endif %}
+<div class="app-container">
+    <h1>⚽ PronoAnalyst Live Pro</h1>
 
-            <h3>Données récentes extraites (Google) :</h3>
-            <p style="font-size: 0.9em; color: #555;">{{ result.raw_snippets }}</p>
-        </div>
-        {% endif %}
+    <!-- Onglets des Jours -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="selectTab(this, 'live')">🔴 Matchs en Direct</button>
+        {% for day in days %}
+            <button class="tab-btn" onclick="selectTab(this, '{{ day.code }}')">{{ day.label }}</button>
+        {% endfor %}
     </div>
+
+    <!-- Formulaire d'analyse -->
+    <div class="form-grid">
+        <div class="input-group">
+            <label>Équipe Domicile (ou Favori)</label>
+            <input type="text" id="team_a" placeholder="Ex: Real Madrid">
+        </div>
+        <div class="input-group">
+            <label>Équipe Extérieure (Adversaire)</label>
+            <input type="text" id="team_b" placeholder="Ex: FC Barcelone">
+        </div>
+    </div>
+
+    <div class="form-grid">
+        <div class="input-group">
+            <label>Championnat / Compétition</label>
+            <select id="league">
+                {% for league in leagues %}
+                    <option value="{{ league }}">{{ league }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group" style="display: flex; align-items: center; margin-top: 20px;">
+            <label style="cursor: pointer;">
+                <input type="checkbox" id="is_midweek"> Match en milieu de semaine / Calendrier chargé
+            </label>
+        </div>
+    </div>
+
+    <button class="btn-analyze" onclick="runAnalysis()">Lancer le croisement des données</button>
+
+    <!-- Zone d'affichage des résultats -->
+    <div id="results" class="results-box">
+        <h2 id="match-title" style="text-align: center; color: var(--primary);"></h2>
+        <p><strong>Compétition :</strong> <span id="league-tag" class="badge"></span></p>
+        
+        <h3>🎯 Pronostics Sûrs Recommandés :</h3>
+        <div id="pronostics-container"></div>
+
+        <h3>📊 Analyse des Critères Croisés :</h3>
+        <ul>
+            <li><strong>Probabilité BTTS :</strong> <span id="btts-val"></span></li>
+            <li><strong>Tendance xG Favori :</strong> <span id="xg-val"></span></li>
+            <li><strong>Fragilité Défensive :</strong> <span id="def-val"></span></li>
+            <li><strong>Arbitrage :</strong> <span id="ref-val"></span></li>
+        </ul>
+
+        <div id="notes-box" style="color: #c0392b; font-weight: bold;"></div>
+    </div>
+</div>
+
+<script>
+let currentDay = 'live';
+
+function selectTab(btn, dayCode) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentDay = dayCode;
+}
+
+function runAnalysis() {
+    const teamA = document.getElementById('team_a').value;
+    const teamB = document.getElementById('team_b').value;
+    const league = document.getElementById('league').value;
+    const isMidweek = document.getElementById('is_midweek').checked;
+
+    if (!teamA || !teamB) {
+        alert("Veuillez renseigner les deux équipes.");
+        return;
+    }
+
+    fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            team_a: teamA,
+            team_b: teamB,
+            league: league,
+            is_midweek: isMidweek,
+            day: currentDay
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById('results').style.display = 'block';
+        document.getElementById('match-title').innerText = `${data.team_a} vs ${data.team_b}`;
+        document.getElementById('league-tag').innerText = data.league;
+        
+        document.getElementById('btts-val').innerText = data.btts_prob;
+        document.getElementById('xg-val').innerText = data.xg_trend;
+        document.getElementById('def-val').innerText = data.defensive_fragility;
+        document.getElementById('ref-val').innerText = data.referee_factor;
+
+        let pronoHtml = '';
+        data.pronostics_surs.forEach(p => {
+            pronoHtml += `
+                <div class="prono-card">
+                    <div class="prono-title">${p.type} (Confiance : ${p.confiance})</div>
+                    <div>👉 <strong>${p.selection}</strong></div>
+                </div>
+            `;
+        });
+        document.getElementById('pronostics-container').innerHTML = pronoHtml;
+
+        let notesHtml = '';
+        if(data.notes.length > 0) {
+            notesHtml = '⚠️ Attention : ' + data.notes.join(' ');
+        }
+        document.getElementById('notes-box').innerText = notesHtml;
+    });
+}
+</script>
+
 </body>
 </html>
