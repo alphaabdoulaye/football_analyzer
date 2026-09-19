@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analyseur Pro - Pronostics & Matchs</title>
+    <title>PronoAnalyst Live Pro</title>
     <style>
         :root { --primary: #1a2a3a; --accent: #27ae60; --bg: #f4f7f6; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
+        body { font-family: Arial, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
         .app-container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         h1 { color: var(--primary); text-align: center; margin-bottom: 20px; }
         
-        /* Navigation Onglets */
         .tabs { display: flex; overflow-x: auto; gap: 8px; border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-bottom: 20px; }
         .tab-btn { background: #e0e0e0; border: none; padding: 10px 16px; border-radius: 20px; cursor: pointer; white-space: nowrap; font-weight: bold; }
         .tab-btn.active { background: var(--primary); color: white; }
@@ -25,7 +24,6 @@
         .btn-analyze { width: 100%; padding: 14px; background: var(--accent); color: white; border: none; border-radius: 6px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; }
         .btn-analyze:hover { background: #219150; }
 
-        /* Carte Pronostics */
         .results-box { margin-top: 25px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background: #fafafa; display: none; }
         .prono-card { background: #e8f8f5; border-left: 5px solid var(--accent); padding: 12px; margin: 10px 0; border-radius: 4px; }
         .prono-title { font-weight: bold; color: #1e8449; }
@@ -45,7 +43,7 @@
         {% endfor %}
     </div>
 
-    <!-- Formulaire d'analyse -->
+    <!-- Formulaire -->
     <div class="form-grid">
         <div class="input-group">
             <label>Équipe Domicile (ou Favori)</label>
@@ -75,7 +73,7 @@
 
     <button class="btn-analyze" onclick="runAnalysis()">Lancer le croisement des données</button>
 
-    <!-- Zone d'affichage des résultats -->
+    <!-- Zone de Résultats -->
     <div id="results" class="results-box">
         <h2 id="match-title" style="text-align: center; color: var(--primary);"></h2>
         <p><strong>Compétition :</strong> <span id="league-tag" class="badge"></span></p>
