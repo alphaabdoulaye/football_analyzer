@@ -1,61 +1,57 @@
 import os
-import requests
 import re
-from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify
+import requests
 
 app = Flask(__name__)
 
-# Récupération des clés Google depuis les variables d'environnement
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-GOOGLE_CX = os.environ.get("GOOGLE_CX")
-
-LEAGUES = [
-    "Ligue 1", "Premier League", "La Liga", "Serie A", "Bundesliga", 
-    "Ligue des Champions", "Europa League", "Saudi Pro League"
-]
+# Configuration des clés d'API (Récupérées via variables d'environnement sur Render ou clés par défaut)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyCDq3V7PxKWzDM_s8q_ncyCCyHKMs5IoTY")
+GOOGLE_CX = os.getenv("GOOGLE_CX", "91521213dedaa4040")
 
 def search_google(query):
-    """Effectue une recherche via l'API Google Custom Search."""
-    if not GOOGLE_API_KEY or not GOOGLE_CX:
-        print("Erreur : GOOGLE_API_KEY ou GOOGLE_CX manquant.")
-        return ""
-    
+    """Exécute une requête sur l'API Google Custom Search."""
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
-        'key': GOOGLE_API_KEY,
-        'cx': GOOGLE_CX,
-        'q': query,
-        'num': 6
+        "key": GOOGLE_API_KEY,
+        "cx": GOOGLE_CX,
+        "q": query,
+        "num": 5
     }
     try:
-        res = requests.get(url, params=params, timeout=8)
-        data = res.json()
-        items = data.get("items", [])
-        snippets = [item.get("snippet", "") + " " + item.get("title", "") for item in items]
-        return " ".join(snippets)
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("items", [])
+            # Concatène les titres et extraits (snippets) renvoyés par Google
+            combined_text = " ".join([f"{item.get('title', '')} {item.get('snippet', '')}" for item in items])
+            return combined_text
+        else:
+            print(f"Erreur API Google ({response.status_code}): {response.text}")
+            return ""
     except Exception as e:
-        print(f"Erreur lors de la recherche Google : {e}")
+        print(f"Erreur lors de la requête Google: {e}")
         return ""
 
 def fetch_real_matches_google(league_name, date_str):
-    """
-    Recherche dynamique des matchs réels du jour via Google.
-    Parsing assoupli pour capturer tous les formats de tirets/vs.
-    """
-    query = f"programme matchs {league_name} {date_str} rencontres calendrier"
+    """Recherche dynamique des matchs réels du jour via Google."""
+    query = f"programme matchs {league_name} {date_str} calendrier rencontres"
     search_text = search_google(query)
     
     if not search_text:
         return []
 
-    # Capture dynamique des rencontres (formats vs, -, /, –, —)
+    # Regex flexible gérant majuscules, minuscules, tirets, vs, / et caractères accentués
     pattern = r'([A-Za-z0-9À-ÿ\s]{3,20})\s*(?:vs|v|-|/|–|—)\s*([A-Za-z0-9À-ÿ\s]{3,20})'
     raw_matches = re.findall(pattern, search_text, re.IGNORECASE)
     
     matches = []
     seen = set()
-    forbidden_words = ["match", "direct", "ligue", "premier", "foot", "football", "actu", "live", "vs", "score", "journee", "champions", "calendrier"]
+    forbidden_words = [
+        "match", "direct", "ligue", "premier", "foot", "football", 
+        "actu", "live", "vs", "score", "journee", "champions", 
+        "calendrier", "classement", "resultat", "resultats"
+    ]
 
     for team_a, team_b in raw_matches:
         t_a = team_a.strip()
@@ -64,7 +60,7 @@ def fetch_real_matches_google(league_name, date_str):
         t_a_lower = t_a.lower()
         t_b_lower = t_b.lower()
         
-        # Filtre les mots parasites
+        # Filtre les mots-clés parasites
         if any(w in t_a_lower for w in forbidden_words) or any(w in t_b_lower for w in forbidden_words):
             continue
             
@@ -78,123 +74,60 @@ def fetch_real_matches_google(league_name, date_str):
 
     return matches
 
-# --- EXECUTION DES 3 REQUÊTES SPÉCIFIQUES ---
-
-def req1_get_standings(team_name, league):
-    """REQUÊTE 1 : Recherche du classement / rang de l'équipe."""
-    query = f"classement {league} {team_name} position rang"
-    text = search_google(query)
+def fetch_match_analysis_data(team_a, team_b, league_name):
+    """Exécute les 3 requêtes Google dédiées aux statistiques du match."""
     
-    rank_match = re.search(r'(\d{1,2})\s*(?:er|e|ème)\b', text, re.IGNORECASE)
-    rank = f"{rank_match.group(1)}e" if rank_match else "Rang non détecté"
-    return rank, text
-
-def req2_get_last_5_matches(team_a, team_b):
-    """REQUÊTE 2 : Recherche des 5 dernières rencontres (H2H / forme)."""
-    query = f"{team_a} vs {team_b} derniers matchs 5 dernieres rencontres resultats face a face"
-    text = search_google(query)
-    return text
-
-def req3_get_goal_difference(team_name, league):
-    """REQUÊTE 3 : Recherche de la différence de buts (Goal Avantage / Difference)."""
-    query = f"{team_name} difference de buts goal average buts marques encaisses classement {league}"
-    text = search_google(query)
+    # 1. Requête Classement & Points
+    req1_query = f"classement {team_a} {team_b} {league_name} points rang"
+    text1 = search_google(req1_query)
     
-    diff_match = re.search(r'(?:différence|diff|DB|goal\s*average)\s*:?\s*([+-]?\d{1,2})', text, re.IGNORECASE)
-    diff = diff_match.group(1) if diff_match else "N/A"
-    if diff != "N/A" and not diff.startswith('+') and not diff.startswith('-'):
-        diff = f"+{diff}"
-    return diff, text
-
-
-def analyze_match_advanced(team_a, team_b, league, is_midweek=False):
-    """Combinaison des données issues des 3 requêtes Google."""
+    # 2. Requête Forme récente (Derniers matchs)
+    req2_query = f"dernier matchs {team_a} {team_b} forme recente resultats"
+    text2 = search_google(req2_query)
     
-    # Exécution des 3 requêtes Google ciblées
-    rank_a, _ = req1_get_standings(team_a, league)
-    rank_b, _ = req1_get_standings(team_b, league)
+    # 3. Requête Face-à-face (H2H) & Différence de buts
+    req3_query = f"confrontations directes h2h {team_a} vs {team_b} buts"
+    text3 = search_google(req3_query)
     
-    text_last_5 = req2_get_last_5_matches(team_a, team_b)
-    
-    diff_a, _ = req3_get_goal_difference(team_a, league)
-    diff_b, _ = req3_get_goal_difference(team_b, league)
-
-    # Analyse et prise en compte du calendrier (milieu de semaine)
-    if is_midweek:
-        btts_prob = "Très Élevée (88%)"
-        defensive_fragility = "Accentuée (Fatigue / Rotation due au calendrier)"
-        xg_trend = "Baisse d'efficacité offensive du favori"
-        notes = ["Match en milieu de semaine : La probabilité du BTTS augmente. Exclure 'Victoire sans encaisser'."]
-        prono_1 = "Les deux équipes marquent (BTTS - Oui)"
-        prono_2 = "Multiscore : 2-1, 1-1 ou 3-1"
-    else:
-        btts_prob = "Moyenne / Élevée (74%)"
-        defensive_fragility = "Modérée"
-        xg_trend = "Élevée (~1.85 xG/match)"
-        notes = ["Analyse croisée via Google : Rang, 5 dernières rencontres et différence de buts."]
-        prono_1 = f"Victoire ou Nul ({team_a}) + Plus de 1.5 buts"
-        prono_2 = "Plus de 2.5 buts dans le match"
-
     return {
-        "team_a": team_a,
-        "team_b": team_b,
-        "league": league,
-        "standings": {
-            "rank_a": rank_a,
-            "rank_b": rank_b,
-            "diff_goals_a": diff_a,
-            "diff_goals_b": diff_b
-        },
-        "btts_prob": btts_prob,
-        "xg_trend": xg_trend,
-        "defensive_fragility": defensive_fragility,
-        "referee_factor": "Facteur arbitrage pris en compte dans l'analyse H2H",
-        "notes": notes,
-        "pronostics_surs": [
-            {"type": "Pronostic Sécurisé N°1", "selection": prono_1, "confiance": "90%"},
-            {"type": "Pronostic Sécurisé N°2 (Multiscore/Buts)", "selection": prono_2, "confiance": "85%"}
-        ]
+        "standings_raw": text1 if text1 else "Données de classement non disponibles via Google.",
+        "recent_form_raw": text2 if text2 else "Données de forme récente non disponibles via Google.",
+        "h2h_raw": text3 if text3 else "Données H2H non disponibles via Google."
     }
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route("/")
 def index():
-    days = []
-    today = datetime.now()
-    french_days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-    
-    for i in range(7):
-        date_obj = today + timedelta(days=i)
-        day_name = french_days[date_obj.weekday()]
-        days.append({
-            "code": date_obj.strftime("%Y-%m-%d"),
-            "label": f"{day_name} {date_obj.strftime('%d/%m')}"
-        })
+    return render_template("index.html")
 
-    return render_template('index.html', days=days, leagues=LEAGUES)
+@app.route("/get_matches", methods=["POST"])
+def get_matches():
+    data = request.get_json() or {}
+    league = data.get("league", "")
+    day = data.get("day", "")
 
-@app.route('/api/fetch_matches', methods=['POST'])
-def api_fetch_matches():
-    data = request.get_json(silent=True) or {}
-    league = data.get('league', 'Ligue 1')
-    day_code = data.get('day', datetime.now().strftime("%Y-%m-%d"))
-    
-    matches = fetch_real_matches_google(league, day_code)
-    return jsonify({"matches": matches})
+    if not league or not day:
+        return jsonify({"status": "error", "message": "Ligue et date requises"}), 400
 
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    data = request.get_json(silent=True) or {}
-    team_a = data.get('team_a')
-    team_b = data.get('team_b')
-    league = data.get('league', 'Ligue 1')
-    is_midweek = data.get('is_midweek', False)
+    matches = fetch_real_matches_google(league, day)
+    return jsonify({"status": "success", "matches": matches})
+
+@app.route("/analyze_match", methods=["POST"])
+def analyze_match():
+    data = request.get_json() or {}
+    team_a = data.get("team_a", "")
+    team_b = data.get("team_b", "")
+    league = data.get("league", "")
 
     if not team_a or not team_b:
-        return jsonify({"error": "Veuillez sélectionner un match."}), 400
+        return jsonify({"status": "error", "message": "Équipes non spécifiées"}), 400
 
-    result = analyze_match_advanced(team_a, team_b, league, is_midweek)
-    return jsonify(result)
+    analysis = fetch_match_analysis_data(team_a, team_b, league)
+    return jsonify({
+        "status": "success",
+        "match": f"{team_a} vs {team_b}",
+        "analysis": analysis
+    })
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
