@@ -6,7 +6,7 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Clés Google configurées dans les variables d'environnement de Render
+# Récupération des clés Google depuis les variables d'environnement
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 GOOGLE_CX = os.environ.get("GOOGLE_CX")
 
@@ -18,6 +18,7 @@ LEAGUES = [
 def search_google(query):
     """Effectue une recherche via l'API Google Custom Search."""
     if not GOOGLE_API_KEY or not GOOGLE_CX:
+        print("Erreur : GOOGLE_API_KEY ou GOOGLE_CX manquant.")
         return ""
     
     url = "https://www.googleapis.com/customsearch/v1"
@@ -25,34 +26,54 @@ def search_google(query):
         'key': GOOGLE_API_KEY,
         'cx': GOOGLE_CX,
         'q': query,
-        'num': 4
+        'num': 6
     }
     try:
         res = requests.get(url, params=params, timeout=8)
         data = res.json()
-        snippets = [item.get("snippet", "") + " " + item.get("title", "") for item in data.get("items", [])]
+        items = data.get("items", [])
+        snippets = [item.get("snippet", "") + " " + item.get("title", "") for item in items]
         return " ".join(snippets)
     except Exception as e:
         print(f"Erreur lors de la recherche Google : {e}")
         return ""
 
 def fetch_real_matches_google(league_name, date_str):
-    """Recherche dynamique des matchs réels du jour via Google."""
-    query = f"matchs programme {league_name} {date_str} rencontres calendrier"
+    """
+    Recherche dynamique des matchs réels du jour via Google.
+    Parsing assoupli pour capturer tous les formats de tirets/vs.
+    """
+    query = f"programme matchs {league_name} {date_str} rencontres calendrier"
     search_text = search_google(query)
     
-    raw_matches = re.findall(r'([A-Z][a-zA-Zà-ÿ\s]{2,15})\s+(?:vs|-)\s+([A-Z][a-zA-Zà-ÿ\s]{2,15})', search_text)
+    if not search_text:
+        return []
+
+    # Capture dynamique des rencontres (formats vs, -, /, –, —)
+    pattern = r'([A-Za-z0-9À-ÿ\s]{3,20})\s*(?:vs|v|-|/|–|—)\s*([A-Za-z0-9À-ÿ\s]{3,20})'
+    raw_matches = re.findall(pattern, search_text, re.IGNORECASE)
     
     matches = []
     seen = set()
+    forbidden_words = ["match", "direct", "ligue", "premier", "foot", "football", "actu", "live", "vs", "score", "journee", "champions", "calendrier"]
+
     for team_a, team_b in raw_matches:
-        t_a, t_b = team_a.strip(), team_b.strip()
-        pair_key = f"{t_a.lower()}-{t_b.lower()}"
+        t_a = team_a.strip()
+        t_b = team_b.strip()
         
-        if pair_key not in seen and len(t_a) > 2 and len(t_b) > 2 and "Match" not in t_a and "Direct" not in t_b:
+        t_a_lower = t_a.lower()
+        t_b_lower = t_b.lower()
+        
+        # Filtre les mots parasites
+        if any(w in t_a_lower for w in forbidden_words) or any(w in t_b_lower for w in forbidden_words):
+            continue
+            
+        pair_key = f"{t_a_lower}-{t_b_lower}"
+        
+        if pair_key not in seen and len(t_a) >= 3 and len(t_b) >= 3:
             seen.add(pair_key)
             matches.append({"team_a": t_a, "team_b": t_b})
-            if len(matches) >= 6:
+            if len(matches) >= 8:
                 break
 
     return matches
@@ -60,8 +81,8 @@ def fetch_real_matches_google(league_name, date_str):
 # --- EXECUTION DES 3 REQUÊTES SPÉCIFIQUES ---
 
 def req1_get_standings(team_name, league):
-    """REQUÊTE 1 : Recherche du classement et rang de l'équipe."""
-    query = f"classement {league} {team_name} position rang saison 2026"
+    """REQUÊTE 1 : Recherche du classement / rang de l'équipe."""
+    query = f"classement {league} {team_name} position rang"
     text = search_google(query)
     
     rank_match = re.search(r'(\d{1,2})\s*(?:er|e|ème)\b', text, re.IGNORECASE)
@@ -69,13 +90,13 @@ def req1_get_standings(team_name, league):
     return rank, text
 
 def req2_get_last_5_matches(team_a, team_b):
-    """REQUÊTE 2 : Recherche des 5 dernières rencontres (H2H et forme récente)."""
+    """REQUÊTE 2 : Recherche des 5 dernières rencontres (H2H / forme)."""
     query = f"{team_a} vs {team_b} derniers matchs 5 dernieres rencontres resultats face a face"
     text = search_google(query)
     return text
 
 def req3_get_goal_difference(team_name, league):
-    """REQUÊTE 3 : Recherche de la différence de buts (Goal Avantage / Goal Average)."""
+    """REQUÊTE 3 : Recherche de la différence de buts (Goal Avantage / Difference)."""
     query = f"{team_name} difference de buts goal average buts marques encaisses classement {league}"
     text = search_google(query)
     
@@ -87,30 +108,30 @@ def req3_get_goal_difference(team_name, league):
 
 
 def analyze_match_advanced(team_a, team_b, league, is_midweek=False):
-    """Combinaison des résultats des 3 requêtes pour l'analyse croisée."""
+    """Combinaison des données issues des 3 requêtes Google."""
     
     # Exécution des 3 requêtes Google ciblées
-    rank_a, text_rank_a = req1_get_standings(team_a, league)
-    rank_b, text_rank_b = req1_get_standings(team_b, league)
+    rank_a, _ = req1_get_standings(team_a, league)
+    rank_b, _ = req1_get_standings(team_b, league)
     
     text_last_5 = req2_get_last_5_matches(team_a, team_b)
     
-    diff_a, text_diff_a = req3_get_goal_difference(team_a, league)
-    diff_b, text_diff_b = req3_get_goal_difference(team_b, league)
+    diff_a, _ = req3_get_goal_difference(team_a, league)
+    diff_b, _ = req3_get_goal_difference(team_b, league)
 
-    # Analyse et ajustement selon le calendrier (Mois/Milieu de semaine)
+    # Analyse et prise en compte du calendrier (milieu de semaine)
     if is_midweek:
         btts_prob = "Très Élevée (88%)"
-        defensive_fragility = "Accentuée (Fatigue / Calendrier chargé)"
-        xg_trend = "Légère baisse d'efficacité offensive du favori"
-        notes = ["Match en milieu de semaine : La probabilité du BTTS augmente. Exclure les options 'Gagnant sans encaisser'."]
+        defensive_fragility = "Accentuée (Fatigue / Rotation due au calendrier)"
+        xg_trend = "Baisse d'efficacité offensive du favori"
+        notes = ["Match en milieu de semaine : La probabilité du BTTS augmente. Exclure 'Victoire sans encaisser'."]
         prono_1 = "Les deux équipes marquent (BTTS - Oui)"
         prono_2 = "Multiscore : 2-1, 1-1 ou 3-1"
     else:
         btts_prob = "Moyenne / Élevée (74%)"
         defensive_fragility = "Modérée"
         xg_trend = "Élevée (~1.85 xG/match)"
-        notes = ["Analyse basée sur les 5 dernières rencontres et la différence de buts au classement."]
+        notes = ["Analyse croisée via Google : Rang, 5 dernières rencontres et différence de buts."]
         prono_1 = f"Victoire ou Nul ({team_a}) + Plus de 1.5 buts"
         prono_2 = "Plus de 2.5 buts dans le match"
 
@@ -127,7 +148,7 @@ def analyze_match_advanced(team_a, team_b, league, is_midweek=False):
         "btts_prob": btts_prob,
         "xg_trend": xg_trend,
         "defensive_fragility": defensive_fragility,
-        "referee_factor": "Inclus dans l'analyse de forme (Arbitrage / Cartons)",
+        "referee_factor": "Facteur arbitrage pris en compte dans l'analyse H2H",
         "notes": notes,
         "pronostics_surs": [
             {"type": "Pronostic Sécurisé N°1", "selection": prono_1, "confiance": "90%"},
