@@ -4,18 +4,11 @@ import requests
 
 app = Flask(__name__)
 
-# Token API Football-Data
+# Votre clé API Football-Data
 FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "934b6fce2a73484791292a5d7318a83b")
 
-# Codes des compétitions pour la version gratuite
-LEAGUE_CODES = {
-    "Ligue 1": "FL1",
-    "Premier League": "PL",
-    "La Liga": "PD",
-    "Serie A": "SA",
-    "Bundesliga": "BL1",
-    "Champions League": "CL"
-}
+# Liste des compétitions majeures à charger automatiquement
+TOP_LEAGUES = ["PL", "FL1", "PD", "SA", "BL1", "CL"]
 
 headers = {
     "X-Auth-Token": FOOTBALL_DATA_API_KEY
@@ -27,37 +20,40 @@ def index():
 
 @app.route("/get_matches", methods=["POST"])
 def get_matches():
-    data = request.get_json() or {}
-    league_name = data.get("league", "")
+    """Récupère automatiquement tous les matchs du jour / à venir sans sélection de ligue."""
+    all_matches = []
     
-    code = LEAGUE_CODES.get(league_name, "PL")
-    url = f"https://api.football-data.org/v4/competitions/{code}/matches?status=SCHEDULED"
-    
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            matches_data = res.json().get("matches", [])
-            matches = []
-            for m in matches_data[:10]:
-                matches.append({
-                    "team_a": m["homeTeam"]["name"],
-                    "team_b": m["awayTeam"]["name"],
-                    "date": m["utcDate"]
-                })
-            return jsonify({"status": "success", "matches": matches})
-        else:
-            return jsonify({"status": "error", "message": f"Erreur API ({res.status_code})"}), 400
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # Parcours automatique des grands championnats
+    for code in TOP_LEAGUES:
+        url = f"https://api.football-data.org/v4/competitions/{code}/matches?status=SCHEDULED"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                matches_data = res.json().get("matches", [])
+                league_name = res.json().get("competition", {}).get("name", code)
+                
+                for m in matches_data[:3]:  # Prend les 3 prochains matchs par ligue
+                    all_matches.append({
+                        "league": league_name,
+                        "league_code": code,
+                        "team_a": m["homeTeam"]["name"],
+                        "team_b": m["awayTeam"]["name"],
+                        "date": m["utcDate"]
+                    })
+        except Exception as e:
+            print(f"Erreur lors du chargement automatique pour {code}: {e}")
+            continue
+
+    return jsonify({"status": "success", "matches": all_matches})
 
 @app.route("/analyze_match", methods=["POST"])
 def analyze_match():
+    """Analyse automatiquement le match sélectionné avec les données de classement et forme."""
     data = request.get_json() or {}
     team_a = data.get("team_a", "")
     team_b = data.get("team_b", "")
-    league_name = data.get("league", "")
+    code = data.get("league_code", "PL")
 
-    code = LEAGUE_CODES.get(league_name, "PL")
     url_standings = f"https://api.football-data.org/v4/competitions/{code}/standings"
     
     try:
@@ -86,16 +82,14 @@ def analyze_match():
                 
                 if standings_lines:
                     standings_info = "\n".join(standings_lines)
-                else:
-                    standings_info = "Équipes non trouvées dans le classement actuel."
 
         return jsonify({
             "status": "success",
             "match": f"{team_a} vs {team_b}",
             "analysis": {
                 "standings_raw": standings_info,
-                "recent_form_raw": "Détails de forme inclus dans le classement ci-dessus.",
-                "h2h_raw": f"Match de la compétition {league_name}."
+                "recent_form_raw": "Forme intégrée dans le classement automatique ci-dessus.",
+                "h2h_raw": f"Match programmé."
             }
         })
     except Exception as e:
